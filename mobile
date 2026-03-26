@@ -3,6 +3,67 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- STATE & SETTINGS
+local S = {
+    AutoLevelActive = false,
+    autoMelee = true,
+    autoSword = false,
+    autoFruit = false,
+    teleportMode = "Tween",
+    farmPos = "Above",
+    farmDistance = 10,
+    lastPortal = "",
+    lastAutoQuest = "",
+    forceQuestAccept = false
+}
+
+-- GAME REMOTES
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents", 5)
+local CombatRemote = RemoteEvents and RemoteEvents:FindFirstChild("CombatRemote")
+local KatanaCombatRemote = RemoteEvents and RemoteEvents:FindFirstChild("KatanaCombatRemote")
+local QuestAccept = RemoteEvents and RemoteEvents:FindFirstChild("QuestAccept")
+local QuestComplete = RemoteEvents and RemoteEvents:FindFirstChild("QuestComplete")
+local QuestAbandon = RemoteEvents and RemoteEvents:FindFirstChild("QuestAbandon")
+local CombatSystem = ReplicatedStorage:FindFirstChild("CombatSystem")
+local RequestHit = CombatSystem and CombatSystem:FindFirstChild("Remotes") and CombatSystem.Remotes:FindFirstChild("RequestHit")
+local AbilitySystem = ReplicatedStorage:FindFirstChild("AbilitySystem")
+local RequestAbility = AbilitySystem and AbilitySystem:FindFirstChild("Remotes") and AbilitySystem.Remotes:FindFirstChild("RequestAbility")
+local RemotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+local TeleportToPortal = RemotesFolder and RemotesFolder:FindFirstChild("TeleportToPortal")
+local NPCs = Workspace:WaitForChild("NPCs", 5)
+
+-- PROGRESSION MAP
+local PROGRESSION_MAP = {
+    { Level = 1, Quest = "QuestNPC1", Mob = "Thief", Portal = "Starter" },
+    { Level = 100, Quest = "QuestNPC2", Mob = "ThiefBoss", Portal = "Starter" },
+    { Level = 250, Quest = "QuestNPC3", Mob = "Monkey", Portal = "Jungle" },
+    { Level = 500, Quest = "QuestNPC4", Mob = "MonkeyBoss", Portal = "Jungle" },
+    { Level = 750, Quest = "QuestNPC5", Mob = "DesertBandit", Portal = "Desert" },
+    { Level = 1000, Quest = "QuestNPC6", Mob = "DesertBoss", Portal = "Desert" },
+    { Level = 1500, Quest = "QuestNPC7", Mob = "FrostRogue", Portal = "Snow" },
+    { Level = 2000, Quest = "QuestNPC8", Mob = "SnowBoss", Portal = "Snow" },
+    { Level = 3000, Quest = "QuestNPC9", Mob = "Sorcerer", Portal = "Shibuya" },
+    { Level = 4000, Quest = "QuestNPC10", Mob = "PandaMiniBoss", Portal = "Shibuya" },
+    { Level = 5000, Quest = "QuestNPC11", Mob = "Hollow", Portal = "HollowIsland" },
+    { Level = 6250, Quest = "QuestNPC12", Mob = "StrongSorcerer", Portal = "Shinjuku" },
+    { Level = 7000, Quest = "QuestNPC13", Mob = "Curse", Portal = "Shinjuku" },
+    { Level = 8000, Quest = "QuestNPC14", Mob = "Slime", Portal = "Slime" },
+    { Level = 9000, Quest = "QuestNPC15", Mob = "AcademyTeacher", Portal = "Academy" },
+    { Level = 10000, Quest = "QuestNPC16", Mob = "Swordsman", Portal = "Judgement" },
+    { Level = 10750, Quest = "QuestNPC17", Mob = "Quincy", Portal = "SoulDominion" },
+    { Level = 11500, Quest = "QuestNPC18", Mob = "Ninja", Portal = "Ninja" },
+    { Level = 12000, Quest = "QuestNPC19", Mob = "ArenaFighter", Portal = "Lawless" }
+}
+
+local MELEE_LIST = {"Anos", "King of heroes", "Strongest in History", "Strongest of Today", "Madoka", "Alucard", "Qin Shi", "Curse king", "Limitless sorcerer", "Yuji", "Combat", "Corrupted Excalibur", "Strongest Shinobi", "Blessed Maiden", "Saber Alter", "Fists", "Brass Knuckles", "Fighting Style", "Gauntlets", "Dragon Gauntlets"}
+local SWORD_LIST = {"Shadow Monarch", "Sin of pride", "Rimuru", "Shadow", "Ichigo", "Manipulator", "Ragna", "Solo hunter", "Excalibur", "Dark Blade", "Katana", "Gryphon", "True Manipulator", "Atomic", "Abyssal Empress", "Sword", "KatanaSword", "Cutlass", "Longsword", "Dual Katana"}
+local FRUIT_LIST = {"Light", "Quake", "Flame", "Bomb", "Invisible"}
 
 local function getUiParent()
     local success, parent = pcall(function() return gethui() end)
@@ -122,7 +183,7 @@ TopBar.Size = UDim2.new(1, 0, 0, 45)
 TopBar.BackgroundColor3 = C.TopBar
 TopBar.BackgroundTransparency = 0.15
 TopBar.Parent = Win
-local Title = createLabel(TopBar, " [ MOBILE VERSION ] JOMHUB", Enum.TextXAlignment.Left, Enum.Font.GothamBold, 14, C.Accent)
+local Title = createLabel(TopBar, " [ SYSTEM ] JOMHUB", Enum.TextXAlignment.Left, Enum.Font.GothamBold, 14, C.Accent)
 Title.Size = UDim2.new(1, -15, 1, 0)
 Title.Position = UDim2.new(0, 15, 0, 0)
 
@@ -404,25 +465,20 @@ end
 local MainTab = Library:CreateTab("Main")
 
 MainTab:CreateSection("Auto Farming")
-MainTab:CreateToggle("Auto Level", false, function(val)
-    print("Auto Level set to:", val)
-    -- S.AutoLevelActive = val
-end)
+MainTab:CreateToggle("Auto Level", false, function(val) S.AutoLevelActive = val end)
 MainTab:CreateToggle("Auto Farm (Manual)", false, function(val)
     print("Auto Farm set to:", val)
 end)
 
 MainTab:CreateSection("Weapons Setup")
-MainTab:CreateToggle("Auto Equip Melee", true, function(val) end)
-MainTab:CreateToggle("Auto Equip Sword", false, function(val) end)
-MainTab:CreateToggle("Auto Equip Fruit", false, function(val) end)
+MainTab:CreateToggle("Auto Equip Melee", true, function(val) S.autoMelee = val end)
+MainTab:CreateToggle("Auto Equip Sword", false, function(val) S.autoSword = val end)
+MainTab:CreateToggle("Auto Equip Fruit", false, function(val) S.autoFruit = val end)
 
 MainTab:CreateSection("Settings")
-MainTab:CreateDropdown("Teleport Mode", {"Tween", "Instant"}, "Tween", function(val)
-    print("Teleport Mode:", val)
-end)
-MainTab:CreateDropdown("Farm Position", {"Above", "Below", "Behind"}, "Above", function(val) end)
-MainTab:CreateSlider("Distance", 0, 20, 10, function(val) end)
+MainTab:CreateDropdown("Teleport Mode", {"Tween", "Instant"}, "Tween", function(val) S.teleportMode = val end)
+MainTab:CreateDropdown("Farm Position", {"Above", "Behind"}, "Above", function(val) S.farmPos = val end)
+MainTab:CreateSlider("Distance", 0, 10, 10, function(val) S.farmDistance = val end)
 
 local BossTab = Library:CreateTab("Boss Hunt")
 BossTab:CreateToggle("Auto Hunt & Hop", false, function(val) end)
