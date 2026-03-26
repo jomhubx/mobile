@@ -6,8 +6,10 @@ local CoreGui = game:GetService("CoreGui")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local VirtualUser = game:GetService("VirtualUser")
 
 local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do task.wait(); LocalPlayer = Players.LocalPlayer end
 
 -- STATE & SETTINGS
 local S = {
@@ -69,6 +71,11 @@ local FRUIT_LIST = {"Light", "Quake", "Flame", "Bomb", "Invisible"}
 
 LocalPlayer.CharacterAdded:Connect(function()
     S.lastPortal = "" -- Reset teleport tracker on death so loops don't get stuck
+end)
+
+LocalPlayer.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
 end)
 
 local function getUiParent()
@@ -541,8 +548,7 @@ local MainTab = Library:CreateTab("Main")
 
 MainTab:CreateSection("Auto Farming")
 MainTab:CreateToggle("Auto Level", false, function(val)
-    print("Auto Level set to:", val)
-    -- S.AutoLevelActive = val
+    S.AutoLevelActive = val
 end)
 MainTab:CreateToggle("Auto Farm (Manual)", false, function(val)
     S.AutoFarmActive = val
@@ -561,8 +567,8 @@ MainTab:CreateMultiDropdown("Auto Skills", {"Skill Z", "Skill X", "Skill C", "Sk
 
 MainTab:CreateSection("Settings")
 MainTab:CreateDropdown("Teleport Mode", {"Tween", "Instant"}, "Tween", function(val) S.teleportMode = val end)
-MainTab:CreateDropdown("Farm Position", {"Above", "Below", "Front", "Behind", "Left", "Right"}, "Above", function(val) S.farmPos = val end)
-MainTab:CreateSlider("Distance", 0, 30, 10, function(val) S.farmDistance = val end)
+MainTab:CreateDropdown("Farm Position", {"Above", "Behind"}, "Above", function(val) S.farmPos = val end)
+MainTab:CreateSlider("Distance", 0, 10, 10, function(val) S.farmDistance = val end)
 
 local BossTab = Library:CreateTab("Boss Hunt")
 BossTab:CreateToggle("Auto Hunt & Hop", false, function(val) end)
@@ -576,12 +582,21 @@ ShopTab:CreateToggle("Auto Stats (Defense)", false, function(val) end)
 -- GAME LOGIC & LOOPS (MOBILE ADAPTED)
 -- =========================================================
 
+local function parseLevel(val)
+    if type(val) == "number" then return val end
+    if type(val) == "string" then
+        local num = string.match(val, "%d+")
+        if num then return tonumber(num) end
+    end
+    return 1
+end
+
 local function getCurrentLevel()
     local data = LocalPlayer:FindFirstChild("Data")
-    if data and data:FindFirstChild("Level") then return data.Level.Value end
+    if data and data:FindFirstChild("Level") then return parseLevel(data.Level.Value) end
     local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-    if leaderstats and leaderstats:FindFirstChild("Level") then return leaderstats.Level.Value end
-    if LocalPlayer:GetAttribute("Level") then return LocalPlayer:GetAttribute("Level") end
+    if leaderstats and leaderstats:FindFirstChild("Level") then return parseLevel(leaderstats.Level.Value) end
+    if LocalPlayer:GetAttribute("Level") then return parseLevel(LocalPlayer:GetAttribute("Level")) end
     return 1
 end
 
@@ -636,19 +651,12 @@ local function getFarmPosition(targetRoot, baseDistance, posType)
     if posType == "Above" then 
         tpPos = enemyPos + Vector3.new(0, baseDistance, 0)
         return CFrame.new(tpPos) * CFrame.Angles(math.rad(-90), 0, 0)
-    elseif posType == "Below" then 
-        tpPos = enemyPos + Vector3.new(0, -baseDistance, 0)
-        return CFrame.new(tpPos) * CFrame.Angles(math.rad(90), 0, 0)
     else
         local lookVec = targetRoot.CFrame.LookVector
         local angle = math.atan2(-lookVec.X, -lookVec.Z)
         local flatCF = CFrame.new(enemyPos) * CFrame.Angles(0, angle, 0)
         
-        if posType == "Behind" then tpPos = (flatCF * CFrame.new(0, 0, baseDistance)).Position
-        elseif posType == "Front" then tpPos = (flatCF * CFrame.new(0, 0, -baseDistance)).Position
-        elseif posType == "Right" then tpPos = (flatCF * CFrame.new(baseDistance, 0, 0)).Position
-        elseif posType == "Left" then tpPos = (flatCF * CFrame.new(-baseDistance, 0, 0)).Position
-        end
+        tpPos = (flatCF * CFrame.new(0, 0, baseDistance)).Position
         return CFrame.lookAt(tpPos, enemyPos)
     end
 end
@@ -760,31 +768,38 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- AUTO LEVEL LOOP
+-- AUTO LEVEL & FARM LOOP (Simplified Quest Logic)
 task.spawn(function()
     while task.wait() do
-        if not S.AutoLevelActive and not S.AutoFarmActive then continue end
+        if not S.AutoLevelActive and not S.AutoFarmActive then 
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local fbv = hrp:FindFirstChild("JomFarmBV")
+                if fbv then fbv:Destroy() end
+            end
+            task.wait(0.5)
+            continue 
+        end
+        
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         local hum = char and char:FindFirstChild("Humanoid")
         if not hrp or not hum or hum.Health <= 0 then continue end
         
-        -- Lock Player Float Height
         local fbv = hrp:FindFirstChild("JomFarmBV")
         if not fbv then
             fbv = Instance.new("BodyVelocity"); fbv.Name = "JomFarmBV"; fbv.MaxForce = Vector3.new(math.huge, math.huge, math.huge); fbv.Velocity = Vector3.zero; fbv.Parent = hrp
         end
         
         local activeMob = ""
-        local targetPortal = nil
+        local activeQuest = ""
         
-        -- Dynamically fetch remotes in case executor loaded faster than the game
         local dynRemotes = ReplicatedStorage:FindFirstChild("Remotes")
         local dynTpPortal = dynRemotes and dynRemotes:FindFirstChild("TeleportToPortal")
         local dynEvents = ReplicatedStorage:FindFirstChild("RemoteEvents")
         local dynAbandon = dynEvents and dynEvents:FindFirstChild("QuestAbandon")
         local dynAccept = dynEvents and dynEvents:FindFirstChild("QuestAccept")
-        local dynComplete = dynEvents and dynEvents:FindFirstChild("QuestComplete")
         
         if S.AutoLevelActive then
             local myLevel = getCurrentLevel()
@@ -793,62 +808,74 @@ task.spawn(function()
                 if myLevel >= tier.Level then bestTier = tier else break end
             end
             activeMob = bestTier.Mob
-            targetPortal = bestTier.Portal
+            activeQuest = bestTier.Quest
             
-            -- 2. Handle Quests
-            if S.lastAutoQuest ~= bestTier.Quest then
-                if dynAbandon then
-                    pcall(function() dynAbandon:FireServer("repeatable") end)
+            -- 1. Instantly teleport to new island via game remote
+            if S.lastPortal ~= bestTier.Portal and bestTier.Portal then
+                if dynTpPortal then
+                    pcall(function() dynTpPortal:FireServer(bestTier.Portal) end)
+                    S.lastPortal = bestTier.Portal
+                    task.wait(3) -- Wait for teleport to process & chunks to load
+                    continue
                 end
-                S.lastAutoQuest = bestTier.Quest
             end
             
+            -- 2. Bypass & Accept Quest Logic (No Turn-In needed)
             local questUI = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("QuestUI")
             local hasQuest = questUI and questUI:FindFirstChild("Quest") and questUI.Quest.Visible
             
-            if not hasQuest and dynAccept then
-                if not char:GetAttribute("LastQuestAccept") or tick() - char:GetAttribute("LastQuestAccept") > 1 then
-                    char:SetAttribute("LastQuestAccept", tick())
+            if S.lastAutoQuest ~= bestTier.Quest then
+                if dynAbandon then
+                    pcall(function() dynAbandon:FireServer("repeatable") end)
+                    pcall(function() dynAbandon:FireServer("Abandon") end)
+                    pcall(function() dynAbandon:FireServer("repeatable") end)
+                    pcall(function() dynAbandon:FireServer() end)
+                end
+                if questUI and questUI:FindFirstChild("Quest") then questUI.Quest.Visible = false end
+                task.wait(0.5)
+                if dynAccept then
                     pcall(function() dynAccept:FireServer(bestTier.Quest) end)
                 end
-            end
-            
-            if S.lastAutoQuest ~= "" and dynComplete then
-                if not char:GetAttribute("LastQuestComplete") or tick() - char:GetAttribute("LastQuestComplete") > 2 then
-                    char:SetAttribute("LastQuestComplete", tick())
-                    pcall(function() dynComplete:FireServer(S.lastAutoQuest) end)
+                S.lastAutoQuest = bestTier.Quest
+                task.wait(0.5)
+                continue
+            elseif not hasQuest then
+                -- Quest auto-completed by reaching kill requirements -> Accept it again
+                if dynAccept then
+                    pcall(function() dynAccept:FireServer(bestTier.Quest) end)
                 end
+                task.wait(0.5)
             end
         else
             activeMob = S.selectedMob
-            targetPortal = getPortalForMob(activeMob)
+            local targetPortal = getPortalForMob(activeMob)
+            if targetPortal and S.lastPortal ~= targetPortal and dynTpPortal then
+                pcall(function() dynTpPortal:FireServer(targetPortal) end)
+                S.lastPortal = targetPortal
+                task.wait(3)
+                continue
+            end
         end
         
-        -- 1. Check and Teleport
-        if targetPortal and S.lastPortal ~= targetPortal and dynTpPortal then
-            pcall(function() dynTpPortal:FireServer(targetPortal) end)
-            S.lastPortal = targetPortal; task.wait(3)
-            continue
-        end
-        
-        -- 3. Farm Logic
+        -- 3. Enemy Targeting Logic
         local target = nil
         local minDist = math.huge
         local unloadedMobPos = nil
         local currentNPCs = Workspace:FindFirstChild("NPCs")
+        
         if currentNPCs then
             for _, npc in ipairs(currentNPCs:GetChildren()) do
                 if npc:IsA("Model") and isMobTarget(npc, activeMob) then
-                        local nHum = npc:FindFirstChild("Humanoid")
-                        local nRoot = npc:FindFirstChild("HumanoidRootPart")
-                        if nHum and nHum.Health > 0 and nRoot then
-                            local d = (hrp.Position - nRoot.Position).Magnitude
-                            if d < minDist then minDist = d; target = npc end
-                        elseif nHum and nHum.Health > 0 and not nRoot then
-                            unloadedMobPos = npc:GetPivot().Position
-                        end
+                    local nHum = npc:FindFirstChild("Humanoid")
+                    local nRoot = npc:FindFirstChild("HumanoidRootPart")
+                    if nHum and nHum.Health > 0 and nRoot then
+                        local d = (hrp.Position - nRoot.Position).Magnitude
+                        if d < minDist then minDist = d; target = npc end
+                    elseif nHum and nHum.Health > 0 and not nRoot then
+                        unloadedMobPos = npc:GetPivot().Position
                     end
                 end
+            end
         end
         
         if target then
