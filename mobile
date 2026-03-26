@@ -485,16 +485,14 @@ MainTab:CreateDropdown("Select Mob", MOB_LIST, "Thief", function(val)
 end)
 
 MainTab:CreateSection("Weapons Setup")
-MainTab:CreateToggle("Auto Equip Melee", true, function(val) end)
-MainTab:CreateToggle("Auto Equip Sword", false, function(val) end)
-MainTab:CreateToggle("Auto Equip Fruit", false, function(val) end)
+MainTab:CreateToggle("Auto Equip Melee", true, function(val) S.autoMelee = val end)
+MainTab:CreateToggle("Auto Equip Sword", false, function(val) S.autoSword = val end)
+MainTab:CreateToggle("Auto Equip Fruit", false, function(val) S.autoFruit = val end)
 
 MainTab:CreateSection("Settings")
-MainTab:CreateDropdown("Teleport Mode", {"Tween", "Instant"}, "Tween", function(val)
-    print("Teleport Mode:", val)
-end)
-MainTab:CreateDropdown("Farm Position", {"Above", "Below", "Behind"}, "Above", function(val) end)
-MainTab:CreateSlider("Distance", 0, 20, 10, function(val) end)
+MainTab:CreateDropdown("Teleport Mode", {"Tween", "Instant"}, "Tween", function(val) S.teleportMode = val end)
+MainTab:CreateDropdown("Farm Position", {"Above", "Below", "Front", "Behind", "Left", "Right"}, "Above", function(val) S.farmPos = val end)
+MainTab:CreateSlider("Distance", 0, 30, 10, function(val) S.farmDistance = val end)
 
 local BossTab = Library:CreateTab("Boss Hunt")
 BossTab:CreateToggle("Auto Hunt & Hop", false, function(val) end)
@@ -509,11 +507,11 @@ ShopTab:CreateToggle("Auto Stats (Defense)", false, function(val) end)
 -- =========================================================
 
 local function getCurrentLevel()
+    local data = LocalPlayer:FindFirstChild("Data")
+    if data and data:FindFirstChild("Level") then return data.Level.Value end
     local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
     if leaderstats and leaderstats:FindFirstChild("Level") then return leaderstats.Level.Value end
     if LocalPlayer:GetAttribute("Level") then return LocalPlayer:GetAttribute("Level") end
-    local data = LocalPlayer:FindFirstChild("Data")
-    if data and data:FindFirstChild("Level") then return data.Level.Value end
     return 1
 end
 
@@ -535,11 +533,20 @@ local function SmartTeleport(targetCFrame)
     local speed = 150
     local timeToReach = math.max(0.1, dist / speed)
     
+    local fbv = hrp:FindFirstChild("JomFarmBV")
+    if fbv then fbv:Destroy() end
+    
+    local bv = hrp:FindFirstChild("JomTeleportBV")
+    if not bv then
+        bv = Instance.new("BodyVelocity")
+        bv.Name = "JomTeleportBV"; bv.Velocity = Vector3.zero; bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge); bv.Parent = hrp
+    end
+    
     local tweenInfo = TweenInfo.new(timeToReach, Enum.EasingStyle.Linear)
     local tween = TweenService:Create(hrp, tweenInfo, {CFrame = targetCFrame})
     
     local conn = RunService.Heartbeat:Connect(function()
-        if not S.AutoLevelActive or not char or hum.Health <= 0 then tween:Cancel() end
+        if not (S.AutoLevelActive or S.AutoFarmActive) or not char or hum.Health <= 0 then tween:Cancel() end
     end)
     
     tween:Play()
@@ -549,23 +556,31 @@ local function SmartTeleport(targetCFrame)
         task.wait()
     end
     if conn then conn:Disconnect() end
+    if bv then bv:Destroy() end
 end
 
 local function getFarmPosition(targetRoot, baseDistance, posType)
     local enemyPos = targetRoot.Position
     local tpPos = enemyPos
     
-    if posType == "Behind" then
+    if posType == "Above" then 
+        tpPos = enemyPos + Vector3.new(0, baseDistance, 0)
+        return CFrame.new(tpPos) * CFrame.Angles(math.rad(-90), 0, 0)
+    elseif posType == "Below" then 
+        tpPos = enemyPos + Vector3.new(0, -baseDistance, 0)
+        return CFrame.new(tpPos) * CFrame.Angles(math.rad(90), 0, 0)
+    else
         local lookVec = targetRoot.CFrame.LookVector
         local angle = math.atan2(-lookVec.X, -lookVec.Z)
         local flatCF = CFrame.new(enemyPos) * CFrame.Angles(0, angle, 0)
-        tpPos = (flatCF * CFrame.new(0, 0, baseDistance)).Position
+        
+        if posType == "Behind" then tpPos = (flatCF * CFrame.new(0, 0, baseDistance)).Position
+        elseif posType == "Front" then tpPos = (flatCF * CFrame.new(0, 0, -baseDistance)).Position
+        elseif posType == "Right" then tpPos = (flatCF * CFrame.new(baseDistance, 0, 0)).Position
+        elseif posType == "Left" then tpPos = (flatCF * CFrame.new(-baseDistance, 0, 0)).Position
+        end
         return CFrame.lookAt(tpPos, enemyPos)
     end
-    
-    -- Default Above Math
-    tpPos = enemyPos + Vector3.new(0, baseDistance, 0)
-    return CFrame.new(tpPos) * CFrame.Angles(math.rad(-90), 0, 0)
 end
 
 local function getWeaponsToUse()
@@ -592,12 +607,49 @@ local function getWeaponsToUse()
 end
 
 local function executeAttacks(targetObj)
-    if RequestHit then pcall(function() RequestHit:FireServer(targetObj) end) end
-    if CombatRemote then pcall(function() CombatRemote:FireServer("Punch", targetObj) end) end
-    if KatanaCombatRemote then pcall(function() KatanaCombatRemote:FireServer("Punch", targetObj) end) end
-    if RequestAbility then
-        for i = 1, 5 do pcall(function() RequestAbility:FireServer(i) end) end
+    local dynCombatSys = ReplicatedStorage:FindFirstChild("CombatSystem")
+    local dynRequestHit = dynCombatSys and dynCombatSys:FindFirstChild("Remotes") and dynCombatSys.Remotes:FindFirstChild("RequestHit")
+    local dynRemoteEv = ReplicatedStorage:FindFirstChild("RemoteEvents")
+    local dynCombatRemote = dynRemoteEv and dynRemoteEv:FindFirstChild("CombatRemote")
+    local dynKatanaRemote = dynRemoteEv and dynRemoteEv:FindFirstChild("KatanaCombatRemote")
+    local dynAbilSys = ReplicatedStorage:FindFirstChild("AbilitySystem")
+    local dynRequestAbil = dynAbilSys and dynAbilSys:FindFirstChild("Remotes") and dynAbilSys.Remotes:FindFirstChild("RequestAbility")
+
+    if dynRequestHit then pcall(function() dynRequestHit:FireServer(targetObj) end) end
+    if dynCombatRemote then pcall(function() dynCombatRemote:FireServer("Punch", targetObj) end) end
+    if dynKatanaRemote then pcall(function() dynKatanaRemote:FireServer("Punch", targetObj) end) end
+    if dynRequestAbil then
+        for i = 1, 5 do pcall(function() dynRequestAbil:FireServer(i) end) end
     end
+end
+
+local function getPortalForMob(mobName)
+    if not mobName or mobName == "" then return nil end
+    local cleanName = string.gsub(mobName, "%d+$", "")
+    local ln = string.gsub(string.lower(cleanName), "%s+", "")
+    
+    local PORTAL_MAP = {
+        thief = "Starter", thiefboss = "Starter",
+        monkey = "Jungle", monkeyboss = "Jungle",
+        desertbandit = "Desert", desertboss = "Desert",
+        frostrogue = "Snow", winterwarden = "Snow", snowboss = "Snow",
+        hollow = "HollowIsland",
+        strongsorcerer = "Shinjuku", curse = "Shinjuku",
+        slime = "Slime", academyteacher = "Academy",
+        swordsman = "Judgement", quincy = "SoulDominion",
+        ninja = "Ninja", arenafighter = "Lawless"
+    }
+    
+    if PORTAL_MAP[ln] then return PORTAL_MAP[ln] end
+    local lnNoBoss = string.gsub(ln, "boss", "")
+    if PORTAL_MAP[lnNoBoss] then return PORTAL_MAP[lnNoBoss] end
+    
+    for _, tier in ipairs(PROGRESSION_MAP) do
+        if string.lower(string.gsub(tier.Mob, "%s+", "")) == ln or string.lower(string.gsub(tier.Mob, "%s+", "")) == lnNoBoss then 
+            return tier.Portal 
+        end
+    end
+    return nil
 end
 
 -- Required Noclip logic to safely Tween
@@ -610,6 +662,8 @@ RunService.Stepped:Connect(function()
     elseif char and char:FindFirstChild("HumanoidRootPart") then
         local fbv = char.HumanoidRootPart:FindFirstChild("JomFarmBV")
         if fbv then fbv:Destroy() end
+        local tbv = char.HumanoidRootPart:FindFirstChild("JomTeleportBV")
+        if tbv then tbv:Destroy() end
     end
 end)
 
@@ -629,6 +683,15 @@ task.spawn(function()
         end
         
         local activeMob = ""
+        local targetPortal = nil
+        
+        -- Dynamically fetch remotes in case executor loaded faster than the game
+        local dynRemotes = ReplicatedStorage:FindFirstChild("Remotes")
+        local dynTpPortal = dynRemotes and dynRemotes:FindFirstChild("TeleportToPortal")
+        local dynEvents = ReplicatedStorage:FindFirstChild("RemoteEvents")
+        local dynAbandon = dynEvents and dynEvents:FindFirstChild("QuestAbandon")
+        local dynAccept = dynEvents and dynEvents:FindFirstChild("QuestAccept")
+        local dynComplete = dynEvents and dynEvents:FindFirstChild("QuestComplete")
         
         if S.AutoLevelActive then
             local myLevel = getCurrentLevel()
@@ -637,18 +700,15 @@ task.spawn(function()
                 if myLevel >= tier.Level then bestTier = tier else break end
             end
             activeMob = bestTier.Mob
-            
-            -- 1. Check and Teleport
-            if S.lastPortal ~= bestTier.Portal and bestTier.Portal and TeleportToPortal then
-                pcall(function() TeleportToPortal:FireServer(bestTier.Portal) end)
-                S.lastPortal = bestTier.Portal; task.wait(3)
-                continue
-            end
+            targetPortal = bestTier.Portal
             
             -- 2. Handle Quests
             if S.lastAutoQuest ~= bestTier.Quest then
-                if S.lastAutoQuest ~= "" and QuestAbandon then
-                    pcall(function() QuestAbandon:FireServer("repeatable"); QuestAbandon:FireServer("Abandon"); QuestAbandon:FireServer(S.lastAutoQuest) end)
+                if S.lastAutoQuest ~= "" and dynAbandon then
+                    pcall(function() dynAbandon:FireServer("repeatable") end)
+                    pcall(function() dynAbandon:FireServer("Abandon") end)
+                    pcall(function() dynAbandon:FireServer(S.lastAutoQuest) end)
+                    pcall(function() dynAbandon:FireServer() end)
                 end
                 S.lastAutoQuest = bestTier.Quest; S.forceQuestAccept = true
             end
@@ -657,34 +717,49 @@ task.spawn(function()
             local hasQuest = questUI and questUI:FindFirstChild("Quest") and questUI.Quest.Visible
             if S.forceQuestAccept then hasQuest = false end
             
-            if not hasQuest and QuestAccept then
-                pcall(function() QuestAccept:FireServer(bestTier.Quest) end); task.wait(0.5); S.forceQuestAccept = false
+            if not hasQuest and dynAccept then
+                pcall(function() dynAccept:FireServer(bestTier.Quest) end); task.wait(0.5); S.forceQuestAccept = false
             end
             
-            if hasQuest and S.lastAutoQuest ~= "" and QuestComplete then
-                pcall(function() QuestComplete:FireServer(S.lastAutoQuest) end)
+            if hasQuest and S.lastAutoQuest ~= "" and dynComplete then
+                if not char:GetAttribute("LastQuestComplete") or tick() - char:GetAttribute("LastQuestComplete") > 2 then
+                    char:SetAttribute("LastQuestComplete", tick())
+                    pcall(function() dynComplete:FireServer(S.lastAutoQuest) end)
+                end
             end
         else
             activeMob = S.selectedMob
+            targetPortal = getPortalForMob(activeMob)
+        end
+        
+        -- 1. Check and Teleport
+        if targetPortal and S.lastPortal ~= targetPortal and dynTpPortal then
+            pcall(function() dynTpPortal:FireServer(targetPortal) end)
+            S.lastPortal = targetPortal; task.wait(3)
+            continue
         end
         
         -- 3. Farm Logic
         local target = nil
         local minDist = math.huge
-        if NPCs then
+        local unloadedMobPos = nil
+        local currentNPCs = Workspace:FindFirstChild("NPCs")
+        if currentNPCs then
             local searchMob = string.gsub(string.lower(activeMob), "%s+", "")
-            for _, npc in ipairs(NPCs:GetChildren()) do
+            for _, npc in ipairs(currentNPCs:GetChildren()) do
                 if npc:IsA("Model") then
                     local cleanName = string.gsub(string.lower(npc.Name), "%s+", "")
                     cleanName = string.gsub(cleanName, "%d+$", "") -- Strip tailing numbers safely
                     
-                    if string.find(cleanName, searchMob) then
-                    local nHum = npc:FindFirstChild("Humanoid")
-                    local nRoot = npc:FindFirstChild("HumanoidRootPart")
-                    if nHum and nHum.Health > 0 and nRoot then
-                        local d = (hrp.Position - nRoot.Position).Magnitude
-                        if d < minDist then minDist = d; target = npc end
-                    end
+                    if cleanName == searchMob then
+                        local nHum = npc:FindFirstChild("Humanoid")
+                        local nRoot = npc:FindFirstChild("HumanoidRootPart")
+                        if nHum and nHum.Health > 0 and nRoot then
+                            local d = (hrp.Position - nRoot.Position).Magnitude
+                            if d < minDist then minDist = d; target = npc end
+                        elseif nHum and nHum.Health > 0 and not nRoot then
+                            unloadedMobPos = npc:GetPivot().Position
+                        end
                     end
                 end
             end
@@ -716,6 +791,9 @@ task.spawn(function()
                     end
                 end
             end
+        elseif unloadedMobPos then
+            pcall(function() LocalPlayer:RequestStreamAroundAsync(unloadedMobPos) end)
+            SmartTeleport(CFrame.new(unloadedMobPos + Vector3.new(0, 15, 0)))
         else
             if fbv then fbv:Destroy() end
             task.wait(0.5)
