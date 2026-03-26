@@ -465,20 +465,25 @@ end
 local MainTab = Library:CreateTab("Main")
 
 MainTab:CreateSection("Auto Farming")
-MainTab:CreateToggle("Auto Level", false, function(val) S.AutoLevelActive = val end)
+MainTab:CreateToggle("Auto Level", false, function(val)
+    print("Auto Level set to:", val)
+    -- S.AutoLevelActive = val
+end)
 MainTab:CreateToggle("Auto Farm (Manual)", false, function(val)
     print("Auto Farm set to:", val)
 end)
 
 MainTab:CreateSection("Weapons Setup")
-MainTab:CreateToggle("Auto Equip Melee", true, function(val) S.autoMelee = val end)
-MainTab:CreateToggle("Auto Equip Sword", false, function(val) S.autoSword = val end)
-MainTab:CreateToggle("Auto Equip Fruit", false, function(val) S.autoFruit = val end)
+MainTab:CreateToggle("Auto Equip Melee", true, function(val) end)
+MainTab:CreateToggle("Auto Equip Sword", false, function(val) end)
+MainTab:CreateToggle("Auto Equip Fruit", false, function(val) end)
 
 MainTab:CreateSection("Settings")
-MainTab:CreateDropdown("Teleport Mode", {"Tween", "Instant"}, "Tween", function(val) S.teleportMode = val end)
-MainTab:CreateDropdown("Farm Position", {"Above", "Behind"}, "Above", function(val) S.farmPos = val end)
-MainTab:CreateSlider("Distance", 0, 10, 10, function(val) S.farmDistance = val end)
+MainTab:CreateDropdown("Teleport Mode", {"Tween", "Instant"}, "Tween", function(val)
+    print("Teleport Mode:", val)
+end)
+MainTab:CreateDropdown("Farm Position", {"Above", "Below", "Behind"}, "Above", function(val) end)
+MainTab:CreateSlider("Distance", 0, 20, 10, function(val) end)
 
 local BossTab = Library:CreateTab("Boss Hunt")
 BossTab:CreateToggle("Auto Hunt & Hop", false, function(val) end)
@@ -487,3 +492,203 @@ BossTab:CreateSlider("Hop Delay (Sec)", 0, 600, 60, function(val) end)
 local ShopTab = Library:CreateTab("Shop & Stats")
 ShopTab:CreateToggle("Auto Stats (Melee)", false, function(val) end)
 ShopTab:CreateToggle("Auto Stats (Defense)", false, function(val) end)
+
+-- =========================================================
+-- GAME LOGIC & LOOPS (MOBILE ADAPTED)
+-- =========================================================
+
+local function getCurrentLevel()
+    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+    if leaderstats and leaderstats:FindFirstChild("Level") then return leaderstats.Level.Value end
+    if LocalPlayer:GetAttribute("Level") then return LocalPlayer:GetAttribute("Level") end
+    local data = LocalPlayer:FindFirstChild("Data")
+    if data and data:FindFirstChild("Level") then return data.Level.Value end
+    return 1
+end
+
+local function SmartTeleport(targetCFrame)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChild("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return end
+    
+    local dist = (hrp.Position - targetCFrame.Position).Magnitude
+    if dist < 50 then hrp.CFrame = targetCFrame; return end
+    
+    if S.teleportMode == "Instant" then
+        if dist > 500 then pcall(function() LocalPlayer:RequestStreamAroundAsync(targetCFrame.Position) end); task.wait(0.1) end
+        hrp.CFrame = targetCFrame
+        return
+    end
+    
+    local speed = 150
+    local timeToReach = math.max(0.1, dist / speed)
+    
+    local tweenInfo = TweenInfo.new(timeToReach, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(hrp, tweenInfo, {CFrame = targetCFrame})
+    
+    local conn = RunService.Heartbeat:Connect(function()
+        if not S.AutoLevelActive or not char or hum.Health <= 0 then tween:Cancel() end
+    end)
+    
+    tween:Play()
+    local startTick = tick()
+    while tween.PlaybackState == Enum.PlaybackState.Playing do
+        if tick() - startTick > timeToReach + 2 then tween:Cancel(); break end
+        task.wait()
+    end
+    if conn then conn:Disconnect() end
+end
+
+local function getFarmPosition(targetRoot, baseDistance, posType)
+    local enemyPos = targetRoot.Position
+    local tpPos = enemyPos
+    
+    if posType == "Behind" then
+        local lookVec = targetRoot.CFrame.LookVector
+        local angle = math.atan2(-lookVec.X, -lookVec.Z)
+        local flatCF = CFrame.new(enemyPos) * CFrame.Angles(0, angle, 0)
+        tpPos = (flatCF * CFrame.new(0, 0, baseDistance)).Position
+        return CFrame.lookAt(tpPos, enemyPos)
+    end
+    
+    -- Default Above Math
+    tpPos = enemyPos + Vector3.new(0, baseDistance, 0)
+    return CFrame.new(tpPos) * CFrame.Angles(math.rad(-90), 0, 0)
+end
+
+local function getWeaponsToUse()
+    local weapons = {}
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    local char = LocalPlayer.Character
+    local function checkList(list)
+        for _, name in ipairs(list) do
+            local w = (char and char:FindFirstChild(name)) or (bp and bp:FindFirstChild(name))
+            if w then return w end
+        end
+        return nil
+    end
+    if S.autoMelee then local w = checkList(MELEE_LIST); if w then table.insert(weapons, w) end end
+    if S.autoSword then local w = checkList(SWORD_LIST); if w then table.insert(weapons, w) end end
+    if S.autoFruit then local w = checkList(FRUIT_LIST); if w then table.insert(weapons, w) end end
+    return weapons
+end
+
+local function executeAttacks(targetObj)
+    if RequestHit then pcall(function() RequestHit:FireServer(targetObj) end) end
+    if CombatRemote then pcall(function() CombatRemote:FireServer("Punch", targetObj) end) end
+    if KatanaCombatRemote then pcall(function() KatanaCombatRemote:FireServer("Punch", targetObj) end) end
+    if RequestAbility then
+        for i = 1, 5 do pcall(function() RequestAbility:FireServer(i) end) end
+    end
+end
+
+-- Required Noclip logic to safely Tween
+RunService.Stepped:Connect(function()
+    local char = LocalPlayer.Character
+    if S.AutoLevelActive and char then
+        for _, v in pairs(char:GetDescendants()) do
+            if v:IsA("BasePart") then v.CanCollide = false end
+        end
+    elseif char and char:FindFirstChild("HumanoidRootPart") then
+        local fbv = char.HumanoidRootPart:FindFirstChild("JomFarmBV")
+        if fbv then fbv:Destroy() end
+    end
+end)
+
+-- AUTO LEVEL LOOP
+task.spawn(function()
+    while task.wait() do
+        if not S.AutoLevelActive then continue end
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChild("Humanoid")
+        if not hrp or not hum or hum.Health <= 0 then continue end
+        
+        -- Lock Player Float Height
+        local fbv = hrp:FindFirstChild("JomFarmBV")
+        if not fbv then
+            fbv = Instance.new("BodyVelocity"); fbv.Name = "JomFarmBV"; fbv.MaxForce = Vector3.new(math.huge, math.huge, math.huge); fbv.Velocity = Vector3.zero; fbv.Parent = hrp
+        end
+        
+        local myLevel = getCurrentLevel()
+        local bestTier = PROGRESSION_MAP[1]
+        for _, tier in ipairs(PROGRESSION_MAP) do
+            if myLevel >= tier.Level then bestTier = tier else break end
+        end
+        
+        -- 1. Check and Teleport
+        if S.lastPortal ~= bestTier.Portal and bestTier.Portal and TeleportToPortal then
+            pcall(function() TeleportToPortal:FireServer(bestTier.Portal) end)
+            S.lastPortal = bestTier.Portal; task.wait(3)
+            continue
+        end
+        
+        -- 2. Handle Quests
+        if S.lastAutoQuest ~= bestTier.Quest then
+            if S.lastAutoQuest ~= "" and QuestAbandon then
+                pcall(function() QuestAbandon:FireServer("repeatable"); QuestAbandon:FireServer("Abandon"); QuestAbandon:FireServer(S.lastAutoQuest) end)
+            end
+            S.lastAutoQuest = bestTier.Quest; S.forceQuestAccept = true
+        end
+        
+        local questUI = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("QuestUI")
+        local hasQuest = questUI and questUI:FindFirstChild("Quest") and questUI.Quest.Visible
+        if S.forceQuestAccept then hasQuest = false end
+        
+        if not hasQuest and QuestAccept then
+            pcall(function() QuestAccept:FireServer(bestTier.Quest) end); task.wait(0.5); S.forceQuestAccept = false
+        end
+        
+        if hasQuest and S.lastAutoQuest ~= "" and QuestComplete then
+            pcall(function() QuestComplete:FireServer(S.lastAutoQuest) end)
+        end
+        
+        -- 3. Farm Logic
+        local target = nil
+        local minDist = math.huge
+        if NPCs then
+            for _, npc in ipairs(NPCs:GetChildren()) do
+                if npc:IsA("Model") and string.find(string.lower(npc.Name), string.lower(bestTier.Mob)) then
+                    local nHum = npc:FindFirstChild("Humanoid")
+                    local nRoot = npc:FindFirstChild("HumanoidRootPart")
+                    if nHum and nHum.Health > 0 and nRoot then
+                        local d = (hrp.Position - nRoot.Position).Magnitude
+                        if d < minDist then minDist = d; target = npc end
+                    end
+                end
+            end
+        end
+        
+        if target then
+            local nRoot = target:FindFirstChild("HumanoidRootPart")
+            local nHum = target:FindFirstChild("Humanoid")
+            if nRoot and nHum then
+                pcall(function() nHum.WalkSpeed = 0; nHum.JumpPower = 0; nRoot.CanCollide = false; nRoot.Velocity = Vector3.zero end)
+                
+                local goalCF = getFarmPosition(nRoot, S.farmDistance, S.farmPos)
+                if (hrp.Position - goalCF.Position).Magnitude > 50 then
+                    SmartTeleport(goalCF)
+                else
+                    hrp.CFrame = goalCF; hrp.Velocity = Vector3.zero
+                    
+                    if not char:GetAttribute("LastAttack") or tick() - char:GetAttribute("LastAttack") > 0.1 then
+                        char:SetAttribute("LastAttack", tick())
+                        
+                        local weapons = getWeaponsToUse()
+                        local loopWeapons = #weapons > 0 and weapons or {false}
+                        for _, wep in ipairs(loopWeapons) do
+                            if wep and typeof(wep) == "Instance" and wep.Parent ~= char then
+                                pcall(function() hum:EquipTool(wep) end); task.wait(0.05)
+                            end
+                            executeAttacks(target)
+                        end
+                    end
+                end
+            end
+        else
+            if fbv then fbv:Destroy() end
+            task.wait(0.5)
+        end
+    end
+end)
