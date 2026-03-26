@@ -24,14 +24,14 @@ Gui.Parent = uiParent
 
 -- Mobile Responsive Colors
 local C = {
-    BG = Color3.fromRGB(15, 18, 25),
-    TopBar = Color3.fromRGB(20, 25, 35),
-    TabBG = Color3.fromRGB(25, 30, 42),
-    ElementBG = Color3.fromRGB(32, 38, 52),
-    ElementHover = Color3.fromRGB(40, 48, 65),
-    Accent = Color3.fromRGB(0, 170, 255),
-    Text = Color3.fromRGB(245, 245, 245),
-    Muted = Color3.fromRGB(160, 170, 185)
+    BG = Color3.fromRGB(5, 8, 14),
+    TopBar = Color3.fromRGB(10, 15, 24),
+    TabBG = Color3.fromRGB(8, 12, 18),
+    ElementBG = Color3.fromRGB(15, 20, 30),
+    ElementHover = Color3.fromRGB(25, 35, 50),
+    Accent = Color3.fromRGB(45, 120, 255),
+    Text = Color3.fromRGB(220, 230, 255),
+    Muted = Color3.fromRGB(100, 120, 150)
 }
 
 local function round(parent, radius)
@@ -92,10 +92,25 @@ Win.Size = UDim2.new(0.92, 0, 0.85, 0)
 Win.Position = UDim2.new(0.5, 0, 0.5, 0)
 Win.AnchorPoint = Vector2.new(0.5, 0.5)
 Win.BackgroundColor3 = C.BG
+Win.BackgroundTransparency = 0.15
 Win.Visible = false
 Win.ClipsDescendants = true
 Win.Parent = Gui
-round(Win, 10)
+
+local WinStroke = Instance.new("UIStroke")
+WinStroke.Thickness = 2
+WinStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+WinStroke.Parent = Win
+
+task.spawn(function()
+    local hue = 0
+    while Gui.Parent do
+        hue = hue + 0.005
+        if hue > 1 then hue = 0 end
+        if WinStroke.Parent then WinStroke.Color = Color3.fromHSV(hue, 1, 1) end
+        task.wait(0.03)
+    end
+end)
 
 -- Max Size constraint limits it so it doesn't get overly huge on Tablets
 local SizeConst = Instance.new("UISizeConstraint")
@@ -105,8 +120,9 @@ SizeConst.Parent = Win
 local TopBar = Instance.new("Frame")
 TopBar.Size = UDim2.new(1, 0, 0, 45)
 TopBar.BackgroundColor3 = C.TopBar
+TopBar.BackgroundTransparency = 0.15
 TopBar.Parent = Win
-local Title = createLabel(TopBar, " JOMHUB | MOBILE", Enum.TextXAlignment.Left, Enum.Font.GothamBold, 14, C.Accent)
+local Title = createLabel(TopBar, " [ SYSTEM ] JOMHUB", Enum.TextXAlignment.Left, Enum.Font.GothamBold, 14, C.Accent)
 Title.Size = UDim2.new(1, -15, 1, 0)
 Title.Position = UDim2.new(0, 15, 0, 0)
 
