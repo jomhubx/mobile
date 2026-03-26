@@ -122,7 +122,7 @@ TopBar.Size = UDim2.new(1, 0, 0, 45)
 TopBar.BackgroundColor3 = C.TopBar
 TopBar.BackgroundTransparency = 0.15
 TopBar.Parent = Win
-local Title = createLabel(TopBar, " [ SYSTEM ] JOMHUB", Enum.TextXAlignment.Left, Enum.Font.GothamBold, 14, C.Accent)
+local Title = createLabel(TopBar, " [ MOBILE VERSION ] JOMHUB", Enum.TextXAlignment.Left, Enum.Font.GothamBold, 14, C.Accent)
 Title.Size = UDim2.new(1, -15, 1, 0)
 Title.Position = UDim2.new(0, 15, 0, 0)
 
