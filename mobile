@@ -20,7 +20,9 @@ local S = {
     farmDistance = 10,
     lastPortal = "",
     lastAutoQuest = "",
-    forceQuestAccept = false
+    forceQuestAccept = false,
+    AutoFarmActive = false,
+    selectedMob = "Thief"
 }
 
 -- GAME REMOTES
@@ -64,6 +66,10 @@ local PROGRESSION_MAP = {
 local MELEE_LIST = {"Anos", "King of heroes", "Strongest in History", "Strongest of Today", "Madoka", "Alucard", "Qin Shi", "Curse king", "Limitless sorcerer", "Yuji", "Combat", "Corrupted Excalibur", "Strongest Shinobi", "Blessed Maiden", "Saber Alter", "Fists", "Brass Knuckles", "Fighting Style", "Gauntlets", "Dragon Gauntlets"}
 local SWORD_LIST = {"Shadow Monarch", "Sin of pride", "Rimuru", "Shadow", "Ichigo", "Manipulator", "Ragna", "Solo hunter", "Excalibur", "Dark Blade", "Katana", "Gryphon", "True Manipulator", "Atomic", "Abyssal Empress", "Sword", "KatanaSword", "Cutlass", "Longsword", "Dual Katana"}
 local FRUIT_LIST = {"Light", "Quake", "Flame", "Bomb", "Invisible"}
+
+LocalPlayer.CharacterAdded:Connect(function()
+    S.lastPortal = "" -- Reset teleport tracker on death so loops don't get stuck
+end)
 
 local function getUiParent()
     local success, parent = pcall(function() return gethui() end)
@@ -470,7 +476,12 @@ MainTab:CreateToggle("Auto Level", false, function(val)
     -- S.AutoLevelActive = val
 end)
 MainTab:CreateToggle("Auto Farm (Manual)", false, function(val)
-    print("Auto Farm set to:", val)
+    S.AutoFarmActive = val
+end)
+
+local MOB_LIST = {"Thief", "ThiefBoss", "Monkey", "MonkeyBoss", "DesertBandit", "DesertBoss", "FrostRogue", "SnowBoss", "Sorcerer", "PandaMiniBoss", "Hollow", "StrongSorcerer", "Curse", "Slime", "AcademyTeacher", "Swordsman", "Quincy", "Ninja", "ArenaFighter"}
+MainTab:CreateDropdown("Select Mob", MOB_LIST, "Thief", function(val)
+    S.selectedMob = val
 end)
 
 MainTab:CreateSection("Weapons Setup")
@@ -571,6 +582,12 @@ local function getWeaponsToUse()
     if S.autoMelee then local w = checkList(MELEE_LIST); if w then table.insert(weapons, w) end end
     if S.autoSword then local w = checkList(SWORD_LIST); if w then table.insert(weapons, w) end end
     if S.autoFruit then local w = checkList(FRUIT_LIST); if w then table.insert(weapons, w) end end
+    
+    -- Failsafe: if nothing matched but they want to farm, grab the first available tool!
+    if #weapons == 0 and bp then
+        local firstTool = bp:FindFirstChildOfClass("Tool") or (char and char:FindFirstChildOfClass("Tool"))
+        if firstTool then table.insert(weapons, firstTool) end
+    end
     return weapons
 end
 
@@ -586,7 +603,7 @@ end
 -- Required Noclip logic to safely Tween
 RunService.Stepped:Connect(function()
     local char = LocalPlayer.Character
-    if S.AutoLevelActive and char then
+    if (S.AutoLevelActive or S.AutoFarmActive) and char then
         for _, v in pairs(char:GetDescendants()) do
             if v:IsA("BasePart") then v.CanCollide = false end
         end
@@ -599,7 +616,7 @@ end)
 -- AUTO LEVEL LOOP
 task.spawn(function()
     while task.wait() do
-        if not S.AutoLevelActive then continue end
+        if not S.AutoLevelActive and not S.AutoFarmActive then continue end
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         local hum = char and char:FindFirstChild("Humanoid")
@@ -611,50 +628,63 @@ task.spawn(function()
             fbv = Instance.new("BodyVelocity"); fbv.Name = "JomFarmBV"; fbv.MaxForce = Vector3.new(math.huge, math.huge, math.huge); fbv.Velocity = Vector3.zero; fbv.Parent = hrp
         end
         
-        local myLevel = getCurrentLevel()
-        local bestTier = PROGRESSION_MAP[1]
-        for _, tier in ipairs(PROGRESSION_MAP) do
-            if myLevel >= tier.Level then bestTier = tier else break end
-        end
+        local activeMob = ""
         
-        -- 1. Check and Teleport
-        if S.lastPortal ~= bestTier.Portal and bestTier.Portal and TeleportToPortal then
-            pcall(function() TeleportToPortal:FireServer(bestTier.Portal) end)
-            S.lastPortal = bestTier.Portal; task.wait(3)
-            continue
-        end
-        
-        -- 2. Handle Quests
-        if S.lastAutoQuest ~= bestTier.Quest then
-            if S.lastAutoQuest ~= "" and QuestAbandon then
-                pcall(function() QuestAbandon:FireServer("repeatable"); QuestAbandon:FireServer("Abandon"); QuestAbandon:FireServer(S.lastAutoQuest) end)
+        if S.AutoLevelActive then
+            local myLevel = getCurrentLevel()
+            local bestTier = PROGRESSION_MAP[1]
+            for _, tier in ipairs(PROGRESSION_MAP) do
+                if myLevel >= tier.Level then bestTier = tier else break end
             end
-            S.lastAutoQuest = bestTier.Quest; S.forceQuestAccept = true
-        end
-        
-        local questUI = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("QuestUI")
-        local hasQuest = questUI and questUI:FindFirstChild("Quest") and questUI.Quest.Visible
-        if S.forceQuestAccept then hasQuest = false end
-        
-        if not hasQuest and QuestAccept then
-            pcall(function() QuestAccept:FireServer(bestTier.Quest) end); task.wait(0.5); S.forceQuestAccept = false
-        end
-        
-        if hasQuest and S.lastAutoQuest ~= "" and QuestComplete then
-            pcall(function() QuestComplete:FireServer(S.lastAutoQuest) end)
+            activeMob = bestTier.Mob
+            
+            -- 1. Check and Teleport
+            if S.lastPortal ~= bestTier.Portal and bestTier.Portal and TeleportToPortal then
+                pcall(function() TeleportToPortal:FireServer(bestTier.Portal) end)
+                S.lastPortal = bestTier.Portal; task.wait(3)
+                continue
+            end
+            
+            -- 2. Handle Quests
+            if S.lastAutoQuest ~= bestTier.Quest then
+                if S.lastAutoQuest ~= "" and QuestAbandon then
+                    pcall(function() QuestAbandon:FireServer("repeatable"); QuestAbandon:FireServer("Abandon"); QuestAbandon:FireServer(S.lastAutoQuest) end)
+                end
+                S.lastAutoQuest = bestTier.Quest; S.forceQuestAccept = true
+            end
+            
+            local questUI = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("QuestUI")
+            local hasQuest = questUI and questUI:FindFirstChild("Quest") and questUI.Quest.Visible
+            if S.forceQuestAccept then hasQuest = false end
+            
+            if not hasQuest and QuestAccept then
+                pcall(function() QuestAccept:FireServer(bestTier.Quest) end); task.wait(0.5); S.forceQuestAccept = false
+            end
+            
+            if hasQuest and S.lastAutoQuest ~= "" and QuestComplete then
+                pcall(function() QuestComplete:FireServer(S.lastAutoQuest) end)
+            end
+        else
+            activeMob = S.selectedMob
         end
         
         -- 3. Farm Logic
         local target = nil
         local minDist = math.huge
         if NPCs then
+            local searchMob = string.gsub(string.lower(activeMob), "%s+", "")
             for _, npc in ipairs(NPCs:GetChildren()) do
-                if npc:IsA("Model") and string.find(string.lower(npc.Name), string.lower(bestTier.Mob)) then
+                if npc:IsA("Model") then
+                    local cleanName = string.gsub(string.lower(npc.Name), "%s+", "")
+                    cleanName = string.gsub(cleanName, "%d+$", "") -- Strip tailing numbers safely
+                    
+                    if string.find(cleanName, searchMob) then
                     local nHum = npc:FindFirstChild("Humanoid")
                     local nRoot = npc:FindFirstChild("HumanoidRootPart")
                     if nHum and nHum.Health > 0 and nRoot then
                         local d = (hrp.Position - nRoot.Position).Magnitude
                         if d < minDist then minDist = d; target = npc end
+                    end
                     end
                 end
             end
