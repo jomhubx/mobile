@@ -1,0 +1,417 @@
+-- JOMHUB V2 : MOBILE OPTIMIZED VERSION
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+local function getUiParent()
+    local success, parent = pcall(function() return gethui() end)
+    if not success or not parent then success, parent = pcall(function() return CoreGui end) end
+    if not success or not parent then parent = Players.LocalPlayer:WaitForChild("PlayerGui") end
+    return parent
+end
+
+local uiParent = getUiParent()
+if uiParent:FindFirstChild("JomHubMobile") then
+    uiParent.JomHubMobile:Destroy()
+end
+
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "JomHubMobile"
+Gui.ResetOnSpawn = false
+Gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+Gui.Parent = uiParent
+
+-- Mobile Responsive Colors
+local C = {
+    BG = Color3.fromRGB(15, 18, 25),
+    TopBar = Color3.fromRGB(20, 25, 35),
+    TabBG = Color3.fromRGB(25, 30, 42),
+    ElementBG = Color3.fromRGB(32, 38, 52),
+    ElementHover = Color3.fromRGB(40, 48, 65),
+    Accent = Color3.fromRGB(0, 170, 255),
+    Text = Color3.fromRGB(245, 245, 245),
+    Muted = Color3.fromRGB(160, 170, 185)
+}
+
+local function round(parent, radius)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, radius)
+    corner.Parent = parent
+end
+
+local function createLabel(parent, text, align, font, size, color)
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.Font = font
+    lbl.TextSize = size
+    lbl.TextColor3 = color
+    lbl.TextXAlignment = align
+    lbl.Parent = parent
+    return lbl
+end
+
+-- Floating Open/Close Button (Touch Friendly)
+local OpenBtn = Instance.new("TextButton")
+OpenBtn.Size = UDim2.new(0, 50, 0, 50)
+OpenBtn.Position = UDim2.new(0.5, -25, 0, 10)
+OpenBtn.BackgroundColor3 = C.TopBar
+OpenBtn.Text = "JOM"
+OpenBtn.TextColor3 = C.Accent
+OpenBtn.Font = Enum.Font.GothamBold
+OpenBtn.TextSize = 14
+OpenBtn.BorderSizePixel = 0
+OpenBtn.Parent = Gui
+round(OpenBtn, 25)
+local OpenStroke = Instance.new("UIStroke")
+OpenStroke.Color = C.Accent
+OpenStroke.Thickness = 2
+OpenStroke.Parent = OpenBtn
+
+-- Make Open Button Draggable
+local dragToggle, dragStart, startPos
+OpenBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragToggle = true; dragStart = input.Position; startPos = OpenBtn.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        OpenBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragToggle = false end
+end)
+
+-- Main Window container (92% of screen width, perfectly centers on any phone)
+local Win = Instance.new("Frame")
+Win.Size = UDim2.new(0.92, 0, 0.85, 0)
+Win.Position = UDim2.new(0.5, 0, 0.5, 0)
+Win.AnchorPoint = Vector2.new(0.5, 0.5)
+Win.BackgroundColor3 = C.BG
+Win.Visible = false
+Win.ClipsDescendants = true
+Win.Parent = Gui
+round(Win, 10)
+
+-- Max Size constraint limits it so it doesn't get overly huge on Tablets
+local SizeConst = Instance.new("UISizeConstraint")
+SizeConst.MaxSize = Vector2.new(500, 650)
+SizeConst.Parent = Win
+
+local TopBar = Instance.new("Frame")
+TopBar.Size = UDim2.new(1, 0, 0, 45)
+TopBar.BackgroundColor3 = C.TopBar
+TopBar.Parent = Win
+local Title = createLabel(TopBar, " JOMHUB | MOBILE", Enum.TextXAlignment.Left, Enum.Font.GothamBold, 14, C.Accent)
+Title.Size = UDim2.new(1, -15, 1, 0)
+Title.Position = UDim2.new(0, 15, 0, 0)
+
+local TabScroll = Instance.new("ScrollingFrame")
+TabScroll.Size = UDim2.new(1, 0, 0, 40)
+TabScroll.Position = UDim2.new(0, 0, 0, 45)
+TabScroll.BackgroundColor3 = C.TabBG
+TabScroll.ScrollBarThickness = 0
+TabScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+TabScroll.AutomaticCanvasSize = Enum.AutomaticSize.X
+TabScroll.Parent = Win
+
+local TabList = Instance.new("UIListLayout")
+TabList.FillDirection = Enum.FillDirection.Horizontal
+TabList.SortOrder = Enum.SortOrder.LayoutOrder
+TabList.Padding = UDim.new(0, 5)
+TabList.Parent = TabScroll
+
+local TabPad = Instance.new("UIPadding")
+TabPad.PaddingLeft = UDim.new(0, 10)
+TabPad.PaddingRight = UDim.new(0, 10)
+TabPad.PaddingTop = UDim.new(0, 5)
+TabPad.PaddingBottom = UDim.new(0, 5)
+TabPad.Parent = TabScroll
+
+local ContentArea = Instance.new("Frame")
+ContentArea.Size = UDim2.new(1, 0, 1, -85)
+ContentArea.Position = UDim2.new(0, 0, 0, 85)
+ContentArea.BackgroundTransparency = 1
+ContentArea.Parent = Win
+
+OpenBtn.Activated:Connect(function()
+    Win.Visible = not Win.Visible
+    OpenBtn.BackgroundTransparency = Win.Visible and 0.5 or 0
+end)
+
+-- Make Topbar Draggable
+local wDrag, wStart, wPos
+TopBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        wDrag = true; wStart = input.Position; wPos = Win.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if wDrag and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - wStart
+        Win.Position = UDim2.new(wPos.X.Scale, wPos.X.Offset + delta.X, wPos.Y.Scale, wPos.Y.Offset + delta.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then wDrag = false end
+end)
+
+-- UI Library Setup
+local Library = {}
+local tabs = {}
+local currentTab = nil
+
+function Library:CreateTab(name)
+    local tBtn = Instance.new("TextButton")
+    tBtn.Size = UDim2.new(0, 100, 1, 0)
+    tBtn.BackgroundColor3 = C.ElementBG
+    tBtn.Text = name
+    tBtn.TextColor3 = C.Muted
+    tBtn.Font = Enum.Font.GothamSemibold
+    tBtn.TextSize = 13
+    tBtn.AutoButtonColor = false
+    tBtn.Parent = TabScroll
+    round(tBtn, 6)
+    
+    -- Auto size tab button to fit text
+    tBtn.Size = UDim2.new(0, tBtn.TextBounds.X + 24, 1, 0)
+    
+    local Page = Instance.new("ScrollingFrame")
+    Page.Size = UDim2.new(1, 0, 1, 0)
+    Page.BackgroundTransparency = 1
+    Page.ScrollBarThickness = 2
+    Page.ScrollBarImageColor3 = C.Accent
+    Page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    Page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    Page.Visible = false
+    Page.Parent = ContentArea
+    
+    local PList = Instance.new("UIListLayout")
+    PList.SortOrder = Enum.SortOrder.LayoutOrder
+    PList.Padding = UDim.new(0, 8)
+    PList.Parent = Page
+    
+    local PPad = Instance.new("UIPadding")
+    PPad.PaddingLeft = UDim.new(0, 12)
+    PPad.PaddingRight = UDim.new(0, 12)
+    PPad.PaddingTop = UDim.new(0, 12)
+    PPad.PaddingBottom = UDim.new(0, 12)
+    PPad.Parent = Page
+    
+    local tabInfo = {Btn = tBtn, Page = Page}
+    table.insert(tabs, tabInfo)
+    
+    tBtn.Activated:Connect(function()
+        for _, v in ipairs(tabs) do
+            v.Btn.TextColor3 = C.Muted
+            v.Btn.BackgroundColor3 = C.ElementBG
+            v.Page.Visible = false
+        end
+        tBtn.TextColor3 = C.Text
+        tBtn.BackgroundColor3 = C.Accent
+        Page.Visible = true
+    end)
+    
+    if #tabs == 1 then
+        tBtn.TextColor3 = C.Text
+        tBtn.BackgroundColor3 = C.Accent
+        Page.Visible = true
+    end
+    
+    local Elements = {}
+    
+    -- Creates a uniformly aligned Section Header
+    function Elements:CreateSection(title)
+        local sec = Instance.new("Frame")
+        sec.Size = UDim2.new(1, 0, 0, 25)
+        sec.BackgroundTransparency = 1
+        sec.Parent = Page
+        local lbl = createLabel(sec, title, Enum.TextXAlignment.Left, Enum.Font.GothamBold, 12, C.Accent)
+        lbl.Size = UDim2.new(1, 0, 1, 0)
+    end
+
+    -- 100% Width Mobile Friendly Toggle
+    function Elements:CreateToggle(title, default, callback)
+        local state = default or false
+        local tgl = Instance.new("TextButton")
+        tgl.Size = UDim2.new(1, 0, 0, 45) -- Standard touch height
+        tgl.BackgroundColor3 = C.ElementBG
+        tgl.Text = ""
+        tgl.AutoButtonColor = false
+        tgl.Parent = Page
+        round(tgl, 8)
+        
+        local lbl = createLabel(tgl, title, Enum.TextXAlignment.Left, Enum.Font.Gotham, 13, C.Text)
+        lbl.Size = UDim2.new(1, -60, 1, 0); lbl.Position = UDim2.new(0, 15, 0, 0)
+        
+        local switch = Instance.new("Frame")
+        switch.Size = UDim2.new(0, 40, 0, 22)
+        switch.AnchorPoint = Vector2.new(1, 0.5)
+        switch.Position = UDim2.new(1, -15, 0.5, 0)
+        switch.BackgroundColor3 = state and C.Accent or C.TopBar
+        switch.Parent = tgl
+        round(switch, 11)
+        
+        local circle = Instance.new("Frame")
+        circle.Size = UDim2.new(0, 16, 0, 16)
+        circle.AnchorPoint = Vector2.new(0, 0.5)
+        circle.Position = UDim2.new(0, state and 21 or 3, 0.5, 0)
+        circle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        circle.Parent = switch
+        round(circle, 8)
+        
+        tgl.Activated:Connect(function()
+            state = not state
+            TweenService:Create(switch, TweenInfo.new(0.2), {BackgroundColor3 = state and C.Accent or C.TopBar}):Play()
+            TweenService:Create(circle, TweenInfo.new(0.2), {Position = UDim2.new(0, state and 21 or 3, 0.5, 0)}):Play()
+            if callback then callback(state) end
+        end)
+    end
+    
+    -- 100% Width Mobile Friendly Dropdown
+    function Elements:CreateDropdown(title, list, default, callback)
+        local drop = Instance.new("Frame")
+        drop.Size = UDim2.new(1, 0, 0, 45)
+        drop.BackgroundColor3 = C.ElementBG
+        drop.ClipsDescendants = true
+        drop.Parent = Page
+        round(drop, 8)
+        
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 45)
+        btn.BackgroundTransparency = 1
+        btn.Text = ""
+        btn.Parent = drop
+        
+        local lbl = createLabel(btn, title .. ": " .. (default or "None"), Enum.TextXAlignment.Left, Enum.Font.Gotham, 13, C.Text)
+        lbl.Size = UDim2.new(1, -40, 1, 0); lbl.Position = UDim2.new(0, 15, 0, 0)
+        
+        local icon = createLabel(btn, "+", Enum.TextXAlignment.Right, Enum.Font.GothamBold, 16, C.Accent)
+        icon.Size = UDim2.new(0, 20, 1, 0); icon.Position = UDim2.new(1, -25, 0, 0)
+        
+        local listFrame = Instance.new("Frame")
+        listFrame.Size = UDim2.new(1, 0, 1, -45)
+        listFrame.Position = UDim2.new(0, 0, 0, 45)
+        listFrame.BackgroundTransparency = 1
+        listFrame.Parent = drop
+        
+        local dList = Instance.new("UIListLayout")
+        dList.SortOrder = Enum.SortOrder.LayoutOrder
+        dList.Parent = listFrame
+        
+        local open = false
+        btn.Activated:Connect(function()
+            open = not open
+            local targetSize = open and 45 + (#list * 35) or 45
+            icon.Text = open and "-" or "+"
+            TweenService:Create(drop, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, targetSize)}):Play()
+        end)
+        
+        for _, item in ipairs(list) do
+            local iBtn = Instance.new("TextButton")
+            iBtn.Size = UDim2.new(1, 0, 0, 35)
+            iBtn.BackgroundColor3 = C.ElementBG
+            iBtn.Text = "  " .. item
+            iBtn.TextColor3 = C.Muted
+            iBtn.Font = Enum.Font.Gotham
+            iBtn.TextSize = 13
+            iBtn.TextXAlignment = Enum.TextXAlignment.Left
+            iBtn.BorderSizePixel = 0
+            iBtn.Parent = listFrame
+            
+            iBtn.Activated:Connect(function()
+                lbl.Text = title .. ": " .. item
+                open = false
+                icon.Text = "+"
+                TweenService:Create(drop, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 45)}):Play()
+                if callback then callback(item) end
+            end)
+        end
+    end
+
+    function Elements:CreateSlider(title, min, max, default, callback)
+        local slider = Instance.new("Frame")
+        slider.Size = UDim2.new(1, 0, 0, 60)
+        slider.BackgroundColor3 = C.ElementBG
+        slider.Parent = Page
+        round(slider, 8)
+        
+        local lbl = createLabel(slider, title .. ": " .. default, Enum.TextXAlignment.Left, Enum.Font.Gotham, 13, C.Text)
+        lbl.Size = UDim2.new(1, -30, 0, 30); lbl.Position = UDim2.new(0, 15, 0, 0)
+        
+        local bg = Instance.new("Frame")
+        bg.Size = UDim2.new(1, -30, 0, 6)
+        bg.Position = UDim2.new(0, 15, 0, 38)
+        bg.BackgroundColor3 = C.TopBar
+        bg.Parent = slider
+        round(bg, 3)
+        
+        local fill = Instance.new("Frame")
+        local pct = math.clamp((default - min) / (max - min), 0, 1)
+        fill.Size = UDim2.new(pct, 0, 1, 0)
+        fill.BackgroundColor3 = C.Accent
+        fill.Parent = bg
+        round(fill, 3)
+        
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 1, 20)
+        btn.Position = UDim2.new(0, 0, 0, -10)
+        btn.BackgroundTransparency = 1
+        btn.Text = ""
+        btn.Parent = bg
+        
+        local drag = false
+        btn.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then drag = true end end)
+        UserInputService.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then drag = false end end)
+        UserInputService.InputChanged:Connect(function(i)
+            if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+                local x = math.clamp((i.Position.X - bg.AbsolutePosition.X) / bg.AbsoluteSize.X, 0, 1)
+                local val = math.floor(min + (max - min) * x)
+                fill.Size = UDim2.new(x, 0, 1, 0)
+                lbl.Text = title .. ": " .. val
+                if callback then callback(val) end
+            end
+        end)
+    end
+    
+    return Elements
+end
+
+-- =========================================================
+-- PORT YOUR JOMHUB SETTINGS & LOOPS HERE
+-- =========================================================
+
+local MainTab = Library:CreateTab("Main")
+
+MainTab:CreateSection("Auto Farming")
+MainTab:CreateToggle("Auto Level", false, function(val)
+    print("Auto Level set to:", val)
+    -- S.AutoLevelActive = val
+end)
+MainTab:CreateToggle("Auto Farm (Manual)", false, function(val)
+    print("Auto Farm set to:", val)
+end)
+
+MainTab:CreateSection("Weapons Setup")
+MainTab:CreateToggle("Auto Equip Melee", true, function(val) end)
+MainTab:CreateToggle("Auto Equip Sword", false, function(val) end)
+MainTab:CreateToggle("Auto Equip Fruit", false, function(val) end)
+
+MainTab:CreateSection("Settings")
+MainTab:CreateDropdown("Teleport Mode", {"Tween", "Instant"}, "Tween", function(val)
+    print("Teleport Mode:", val)
+end)
+MainTab:CreateDropdown("Farm Position", {"Above", "Below", "Behind"}, "Above", function(val) end)
+MainTab:CreateSlider("Distance", 0, 20, 10, function(val) end)
+
+local BossTab = Library:CreateTab("Boss Hunt")
+BossTab:CreateToggle("Auto Hunt & Hop", false, function(val) end)
+BossTab:CreateSlider("Hop Delay (Sec)", 0, 600, 60, function(val) end)
+
+local ShopTab = Library:CreateTab("Shop & Stats")
+ShopTab:CreateToggle("Auto Stats (Melee)", false, function(val) end)
+ShopTab:CreateToggle("Auto Stats (Defense)", false, function(val) end)
