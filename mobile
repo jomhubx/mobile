@@ -20,9 +20,9 @@ local S = {
     farmDistance = 10,
     lastPortal = "",
     lastAutoQuest = "",
-    forceQuestAccept = false,
     AutoFarmActive = false,
-    selectedMob = "Thief"
+    selectedMob = "Thief",
+    autoSkills = {}
 }
 
 -- GAME REMOTES
@@ -461,6 +461,75 @@ function Library:CreateTab(name)
         end)
     end
     
+    -- 100% Width Mobile Friendly Multi-Dropdown
+    function Elements:CreateMultiDropdown(title, list, defaultDict, callback)
+        local selected = defaultDict or {}
+        local drop = Instance.new("Frame")
+        drop.Size = UDim2.new(1, 0, 0, 45)
+        drop.BackgroundColor3 = C.ElementBG
+        drop.ClipsDescendants = true
+        drop.Parent = Page
+        round(drop, 8)
+        
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 45)
+        btn.BackgroundTransparency = 1
+        btn.Text = ""
+        btn.Parent = drop
+        
+        local lbl = createLabel(btn, title, Enum.TextXAlignment.Left, Enum.Font.Gotham, 13, C.Text)
+        lbl.Size = UDim2.new(1, -40, 1, 0); lbl.Position = UDim2.new(0, 15, 0, 0)
+        
+        local icon = createLabel(btn, "+", Enum.TextXAlignment.Right, Enum.Font.GothamBold, 16, C.Accent)
+        icon.Size = UDim2.new(0, 20, 1, 0); icon.Position = UDim2.new(1, -25, 0, 0)
+        
+        local listFrame = Instance.new("Frame")
+        listFrame.Size = UDim2.new(1, 0, 1, -45)
+        listFrame.Position = UDim2.new(0, 0, 0, 45)
+        listFrame.BackgroundTransparency = 1
+        listFrame.Parent = drop
+        
+        local dList = Instance.new("UIListLayout")
+        dList.SortOrder = Enum.SortOrder.LayoutOrder
+        dList.Parent = listFrame
+        
+        local open = false
+        btn.Activated:Connect(function()
+            open = not open
+            local targetSize = open and 45 + (#list * 35) or 45
+            icon.Text = open and "-" or "+"
+            TweenService:Create(drop, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, targetSize)}):Play()
+        end)
+        
+        local function updateLabel()
+            local count = 0
+            for k, v in pairs(selected) do if v then count = count + 1 end end
+            lbl.Text = title .. " (" .. count .. ")"
+        end
+        
+        for _, item in ipairs(list) do
+            local iBtn = Instance.new("TextButton")
+            iBtn.Size = UDim2.new(1, 0, 0, 35)
+            iBtn.BackgroundColor3 = C.ElementBG
+            iBtn.Text = "  " .. item .. (selected[item] and " [ON]" or "")
+            iBtn.TextColor3 = selected[item] and C.Accent or C.Muted
+            iBtn.Font = Enum.Font.Gotham
+            iBtn.TextSize = 13
+            iBtn.TextXAlignment = Enum.TextXAlignment.Left
+            iBtn.BorderSizePixel = 0
+            iBtn.Parent = listFrame
+            
+            iBtn.Activated:Connect(function()
+                selected[item] = not selected[item]
+                iBtn.Text = "  " .. item .. (selected[item] and " [ON]" or "")
+                iBtn.TextColor3 = selected[item] and C.Accent or C.Muted
+                updateLabel()
+                if callback then callback(selected) end
+            end)
+        end
+        updateLabel()
+    end
+
     return Elements
 end
 
@@ -488,6 +557,7 @@ MainTab:CreateSection("Weapons Setup")
 MainTab:CreateToggle("Auto Equip Melee", true, function(val) S.autoMelee = val end)
 MainTab:CreateToggle("Auto Equip Sword", false, function(val) S.autoSword = val end)
 MainTab:CreateToggle("Auto Equip Fruit", false, function(val) S.autoFruit = val end)
+MainTab:CreateMultiDropdown("Auto Skills", {"Skill Z", "Skill X", "Skill C", "Skill V", "Skill F"}, S.autoSkills, function(val) S.autoSkills = val end)
 
 MainTab:CreateSection("Settings")
 MainTab:CreateDropdown("Teleport Mode", {"Tween", "Instant"}, "Tween", function(val) S.teleportMode = val end)
@@ -619,7 +689,11 @@ local function executeAttacks(targetObj)
     if dynCombatRemote then pcall(function() dynCombatRemote:FireServer("Punch", targetObj) end) end
     if dynKatanaRemote then pcall(function() dynKatanaRemote:FireServer("Punch", targetObj) end) end
     if dynRequestAbil then
-        for i = 1, 5 do pcall(function() dynRequestAbil:FireServer(i) end) end
+        if S.autoSkills["Skill Z"] then pcall(function() dynRequestAbil:FireServer(1) end) end
+        if S.autoSkills["Skill X"] then pcall(function() dynRequestAbil:FireServer(2) end) end
+        if S.autoSkills["Skill C"] then pcall(function() dynRequestAbil:FireServer(3) end) end
+        if S.autoSkills["Skill V"] then pcall(function() dynRequestAbil:FireServer(4) end) end
+        if S.autoSkills["Skill F"] then pcall(function() dynRequestAbil:FireServer(5) end) end
     end
 end
 
@@ -635,7 +709,7 @@ local function getPortalForMob(mobName)
         frostrogue = "Snow", winterwarden = "Snow", snowboss = "Snow",
         hollow = "HollowIsland",
         strongsorcerer = "Shinjuku", curse = "Shinjuku",
-        slime = "Slime", academyteacher = "Academy",
+        slimewarrior = "Slime", slime = "Slime", academyteacher = "Academy",
         swordsman = "Judgement", quincy = "SoulDominion",
         ninja = "Ninja", arenafighter = "Lawless"
     }
@@ -650,6 +724,25 @@ local function getPortalForMob(mobName)
         end
     end
     return nil
+end
+
+local function isMobTarget(npc, tMob)
+    if not npc or not npc.Name then return false end
+    local cleanName = npc.Name:gsub("%d+$", ""):match("^%s*(.-)%s*$")
+    local noSpaceName = cleanName and string.gsub(cleanName, "%s+", "") or ""
+    
+    if not tMob or tMob == "" then return false end
+    local noSpaceTarget = string.gsub(tMob, "%s+", "")
+    if string.lower(noSpaceName) == string.lower(noSpaceTarget) then return true end
+    
+    if string.find(string.lower(noSpaceTarget), "boss") then
+        local strippedTarget = string.gsub(string.lower(noSpaceTarget), "boss", "")
+        if string.lower(noSpaceName) == strippedTarget then
+            local hum = npc:FindFirstChild("Humanoid")
+            if hum and hum.MaxHealth > 5000 then return true end
+        end
+    end
+    return false
 end
 
 -- Required Noclip logic to safely Tween
@@ -704,24 +797,23 @@ task.spawn(function()
             
             -- 2. Handle Quests
             if S.lastAutoQuest ~= bestTier.Quest then
-                if S.lastAutoQuest ~= "" and dynAbandon then
+                if dynAbandon then
                     pcall(function() dynAbandon:FireServer("repeatable") end)
-                    pcall(function() dynAbandon:FireServer("Abandon") end)
-                    pcall(function() dynAbandon:FireServer(S.lastAutoQuest) end)
-                    pcall(function() dynAbandon:FireServer() end)
                 end
-                S.lastAutoQuest = bestTier.Quest; S.forceQuestAccept = true
+                S.lastAutoQuest = bestTier.Quest
             end
             
             local questUI = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("QuestUI")
             local hasQuest = questUI and questUI:FindFirstChild("Quest") and questUI.Quest.Visible
-            if S.forceQuestAccept then hasQuest = false end
             
             if not hasQuest and dynAccept then
-                pcall(function() dynAccept:FireServer(bestTier.Quest) end); task.wait(0.5); S.forceQuestAccept = false
+                if not char:GetAttribute("LastQuestAccept") or tick() - char:GetAttribute("LastQuestAccept") > 1 then
+                    char:SetAttribute("LastQuestAccept", tick())
+                    pcall(function() dynAccept:FireServer(bestTier.Quest) end)
+                end
             end
             
-            if hasQuest and S.lastAutoQuest ~= "" and dynComplete then
+            if S.lastAutoQuest ~= "" and dynComplete then
                 if not char:GetAttribute("LastQuestComplete") or tick() - char:GetAttribute("LastQuestComplete") > 2 then
                     char:SetAttribute("LastQuestComplete", tick())
                     pcall(function() dynComplete:FireServer(S.lastAutoQuest) end)
@@ -745,13 +837,8 @@ task.spawn(function()
         local unloadedMobPos = nil
         local currentNPCs = Workspace:FindFirstChild("NPCs")
         if currentNPCs then
-            local searchMob = string.gsub(string.lower(activeMob), "%s+", "")
             for _, npc in ipairs(currentNPCs:GetChildren()) do
-                if npc:IsA("Model") then
-                    local cleanName = string.gsub(string.lower(npc.Name), "%s+", "")
-                    cleanName = string.gsub(cleanName, "%d+$", "") -- Strip tailing numbers safely
-                    
-                    if cleanName == searchMob then
+                if npc:IsA("Model") and isMobTarget(npc, activeMob) then
                         local nHum = npc:FindFirstChild("Humanoid")
                         local nRoot = npc:FindFirstChild("HumanoidRootPart")
                         if nHum and nHum.Health > 0 and nRoot then
@@ -762,7 +849,6 @@ task.spawn(function()
                         end
                     end
                 end
-            end
         end
         
         if target then
